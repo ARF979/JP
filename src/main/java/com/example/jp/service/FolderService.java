@@ -3,99 +3,159 @@ package com.example.jp.service;
 import com.example.jp.dto.FolderContentsDTO;
 import com.example.jp.dto.FolderDTO;
 import com.example.jp.dto.FileItemDTO;
-import com.example.jp.entity.FileItem;
-import com.example.jp.entity.Folder;
-import com.example.jp.repository.FileItemRepository;
-import com.example.jp.repository.FolderRepository;
+import com.example.jp.model.FileItem;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
 public class FolderService {
 
-    private final FolderRepository folderRepository;
-    private final FileItemRepository fileItemRepository;
-    private static final String HARDCODED_USER_ID = "hardcoded-user-id";
+    @Value("${app.storage.root}")
+    private String storageRoot;
 
-    @Transactional
-    public FolderDTO createFolder(String name, Long parentId) {
-        Folder folder = new Folder();
-        folder.setName(name);
-        folder.setUserId(HARDCODED_USER_ID);
+    private final FileStorageService fileStorageService;
 
-        if (parentId != null) {
-            Folder parent = folderRepository.findByIdAndUserId(parentId, HARDCODED_USER_ID)
-                    .orElseThrow(() -> new RuntimeException("Parent folder not found"));
-            folder.setParent(parent);
+    /**
+     * Create a new folder
+     */
+    public FolderDTO createFolder(String name, String parentPath) throws IOException {
+        // Validate folder name
+        if (name == null || name.trim().isEmpty() || name.contains("/") || name.contains("\\")) {
+            throw new IllegalArgumentException("Invalid folder name");
         }
 
-        Folder savedFolder = folderRepository.save(folder);
-        return convertToDTO(savedFolder);
+        // Determine the full path
+        String folderPath = parentPath != null && !parentPath.isEmpty()
+                ? Paths.get(parentPath, name).toString()
+                : name;
+
+        Path fullPath = Paths.get(storageRoot, folderPath);
+
+        // Check if folder already exists
+        if (Files.exists(fullPath)) {
+            throw new IOException("Folder already exists: " + name);
+        }
+
+        // Create directory
+        Files.createDirectories(fullPath);
+
+        // Get metadata
+        BasicFileAttributes attrs = Files.readAttributes(fullPath, BasicFileAttributes.class);
+
+        FolderDTO dto = new FolderDTO();
+        dto.setId(null); // No ID in file system based approach
+        dto.setName(name);
+        dto.setParentId(null);
+        dto.setCreatedAt(LocalDateTime.ofInstant(attrs.creationTime().toInstant(), ZoneId.systemDefault()));
+        dto.setUpdatedAt(LocalDateTime.ofInstant(attrs.lastModifiedTime().toInstant(), ZoneId.systemDefault()));
+        dto.setPath(folderPath);
+
+        return dto;
     }
 
-    @Transactional(readOnly = true)
-    public FolderContentsDTO getFolderContents(Long folderId) {
-        // Verify folder exists and belongs to user
-        if (folderId != null) {
-            folderRepository.findByIdAndUserId(folderId, HARDCODED_USER_ID)
-                    .orElseThrow(() -> new RuntimeException("Folder not found"));
+    /**
+     * Get folder contents (subfolders and files)
+     */
+    public FolderContentsDTO getFolderContents(String folderPath) throws IOException {
+        Path fullPath = folderPath == null || folderPath.isEmpty()
+                ? Paths.get(storageRoot)
+                : Paths.get(storageRoot, folderPath);
+
+        // Create root directory if it doesn't exist
+        if (!Files.exists(fullPath)) {
+            Files.createDirectories(fullPath);
         }
 
-        List<Folder> folders = folderId == null
-                ? folderRepository.findByParentIsNullAndUserId(HARDCODED_USER_ID)
-                : folderRepository.findByParentIdAndUserId(folderId, HARDCODED_USER_ID);
+        List<FolderDTO> folders = new ArrayList<>();
+        List<FileItemDTO> files = new ArrayList<>();
 
-        List<FileItem> files = folderId == null
-                ? List.of()
-                : fileItemRepository.findByFolderIdAndUserId(folderId, HARDCODED_USER_ID);
+        try (Stream<Path> stream = Files.list(fullPath)) {
+            stream.forEach(path -> {
+                try {
+                    BasicFileAttributes attrs = Files.readAttributes(path, BasicFileAttributes.class);
+                    String relativePath = Paths.get(storageRoot).relativize(path).toString();
+
+                    if (attrs.isDirectory()) {
+                        FolderDTO folderDTO = new FolderDTO();
+                        folderDTO.setName(path.getFileName().toString());
+                        folderDTO.setPath(relativePath);
+                        folderDTO.setCreatedAt(LocalDateTime.ofInstant(attrs.creationTime().toInstant(), ZoneId.systemDefault()));
+                        folderDTO.setUpdatedAt(LocalDateTime.ofInstant(attrs.lastModifiedTime().toInstant(), ZoneId.systemDefault()));
+                        folders.add(folderDTO);
+                    } else if (attrs.isRegularFile()) {
+                        FileItem fileItem = fileStorageService.getFileMetadata(relativePath);
+                        FileItemDTO fileDTO = new FileItemDTO();
+                        fileDTO.setName(fileItem.getName());
+                        fileDTO.setPath(fileItem.getPath());
+                        fileDTO.setSize(fileItem.getSize());
+                        fileDTO.setMimeType(fileItem.getMimeType());
+                        fileDTO.setFileTypeCategory(fileItem.getFileTypeCategory());
+                        fileDTO.setFileTypeDescription(fileItem.getFileTypeDescription());
+                        fileDTO.setExtension(fileItem.getExtension());
+                        fileDTO.setCreatedAt(fileItem.getCreatedAt());
+                        fileDTO.setUpdatedAt(fileItem.getUpdatedAt());
+                        files.add(fileDTO);
+                    }
+                } catch (IOException e) {
+                    // Skip files that can't be read
+                }
+            });
+        }
+
+        // Sort by name
+        folders.sort(Comparator.comparing(FolderDTO::getName));
+        files.sort(Comparator.comparing(FileItemDTO::getName));
 
         FolderContentsDTO contents = new FolderContentsDTO();
-        contents.setFolders(folders.stream().map(this::convertToDTO).collect(Collectors.toList()));
-        contents.setFiles(files.stream().map(this::convertToFileDTO).collect(Collectors.toList()));
+        contents.setFolders(folders);
+        contents.setFiles(files);
 
         return contents;
     }
 
-    @Transactional
-    public void deleteFolder(Long folderId) {
-        Folder folder = folderRepository.findByIdAndUserId(folderId, HARDCODED_USER_ID)
-                .orElseThrow(() -> new RuntimeException("Folder not found"));
-
-        // Delete all files in this folder
-        List<FileItem> files = fileItemRepository.findByFolderIdAndUserId(folderId, HARDCODED_USER_ID);
-        for (FileItem file : files) {
-            // Physical file deletion will be handled by FileStorageService
-            fileItemRepository.delete(file);
+    /**
+     * Delete a folder and all its contents
+     */
+    public void deleteFolder(String folderPath) throws IOException {
+        if (folderPath == null || folderPath.isEmpty()) {
+            throw new IllegalArgumentException("Cannot delete root folder");
         }
 
-        folderRepository.delete(folder);
-    }
+        Path fullPath = Paths.get(storageRoot, folderPath);
 
-    private FolderDTO convertToDTO(Folder folder) {
-        FolderDTO dto = new FolderDTO();
-        dto.setId(folder.getId());
-        dto.setName(folder.getName());
-        dto.setParentId(folder.getParent() != null ? folder.getParent().getId() : null);
-        dto.setCreatedAt(folder.getCreatedAt());
-        dto.setUpdatedAt(folder.getUpdatedAt());
-        return dto;
-    }
+        if (!Files.exists(fullPath)) {
+            throw new IOException("Folder not found: " + folderPath);
+        }
 
-    private FileItemDTO convertToFileDTO(FileItem file) {
-        FileItemDTO dto = new FileItemDTO();
-        dto.setId(file.getId());
-        dto.setName(file.getName());
-        dto.setSize(file.getSize());
-        dto.setMimeType(file.getMimeType());
-        dto.setFolderId(file.getFolder().getId());
-        dto.setCreatedAt(file.getCreatedAt());
-        dto.setUpdatedAt(file.getUpdatedAt());
-        return dto;
+        if (!Files.isDirectory(fullPath)) {
+            throw new IllegalArgumentException("Path is not a directory: " + folderPath);
+        }
+
+        // Delete directory and all contents recursively
+        try (Stream<Path> walk = Files.walk(fullPath)) {
+            walk.sorted(Comparator.reverseOrder())
+                    .forEach(path -> {
+                        try {
+                            Files.delete(path);
+                        } catch (IOException e) {
+                            // Log error but continue
+                        }
+                    });
+        }
     }
 }
 

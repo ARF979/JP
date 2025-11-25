@@ -1,9 +1,8 @@
 package com.example.jp.controller;
 
 import com.example.jp.dto.FileItemDTO;
-import com.example.jp.entity.FileItem;
+import com.example.jp.model.FileItem;
 import com.example.jp.service.FileItemService;
-import com.example.jp.service.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.UrlResource;
@@ -14,7 +13,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.net.MalformedURLException;
 import java.nio.file.Path;
 
 @RestController
@@ -23,21 +21,20 @@ import java.nio.file.Path;
 public class FileController {
 
     private final FileItemService fileItemService;
-    private final FileStorageService fileStorageService;
 
     @PostMapping("/upload")
     public ResponseEntity<FileItemDTO> uploadFile(
             @RequestParam("file") MultipartFile file,
-            @RequestParam("folderId") Long folderId) throws IOException {
-        FileItemDTO fileItem = fileItemService.uploadFile(file, folderId);
+            @RequestParam(value = "folderPath", required = false, defaultValue = "") String folderPath) throws IOException {
+        FileItemDTO fileItem = fileItemService.uploadFile(file, folderPath);
         return ResponseEntity.ok(fileItem);
     }
 
-    @GetMapping("/{fileId}/download")
-    public ResponseEntity<Resource> downloadFile(@PathVariable Long fileId) throws MalformedURLException {
-        FileItem fileItem = fileItemService.getFile(fileId);
-        Path filePath = fileStorageService.loadFile(fileItem.getStoragePath());
-        Resource resource = new UrlResource(filePath.toUri());
+    @GetMapping("/download")
+    public ResponseEntity<Resource> downloadFile(@RequestParam("path") String filePath) throws IOException {
+        FileItem fileItem = fileItemService.getFile(filePath);
+        Path path = fileItemService.getFilePath(filePath);
+        Resource resource = new UrlResource(path.toUri());
 
         if (!resource.exists()) {
             throw new RuntimeException("File not found");
@@ -50,9 +47,9 @@ public class FileController {
                 .body(resource);
     }
 
-    @DeleteMapping("/{fileId}")
-    public ResponseEntity<Void> deleteFile(@PathVariable Long fileId) throws IOException {
-        fileItemService.deleteFile(fileId);
+    @DeleteMapping
+    public ResponseEntity<Void> deleteFile(@RequestParam("path") String filePath) throws IOException {
+        fileItemService.deleteFile(filePath);
         return ResponseEntity.noContent().build();
     }
 }

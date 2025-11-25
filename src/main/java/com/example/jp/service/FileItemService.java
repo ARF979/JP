@@ -1,73 +1,66 @@
 package com.example.jp.service;
 
 import com.example.jp.dto.FileItemDTO;
-import com.example.jp.entity.FileItem;
-import com.example.jp.entity.Folder;
-import com.example.jp.repository.FileItemRepository;
-import com.example.jp.repository.FolderRepository;
+import com.example.jp.model.FileItem;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.nio.file.Path;
 
 @Service
 @RequiredArgsConstructor
 public class FileItemService {
 
-    private final FileItemRepository fileItemRepository;
-    private final FolderRepository folderRepository;
     private final FileStorageService fileStorageService;
-    private static final String HARDCODED_USER_ID = "hardcoded-user-id";
 
-    @Transactional
-    public FileItemDTO uploadFile(MultipartFile file, Long folderId) throws IOException {
-        // Verify folder exists
-        Folder folder = folderRepository.findByIdAndUserId(folderId, HARDCODED_USER_ID)
-                .orElseThrow(() -> new RuntimeException("Folder not found"));
+    /**
+     * Upload a file to the specified folder path
+     */
+    public FileItemDTO uploadFile(MultipartFile file, String folderPath) throws IOException {
+        // Validate folderPath
+        if (folderPath == null) {
+            folderPath = ""; // Root folder
+        }
 
-        // Store physical file
-        String storedFilename = fileStorageService.storeFile(file);
+        // Store file
+        FileItem fileItem = fileStorageService.storeFile(file, folderPath);
 
-        // Save metadata
-        FileItem fileItem = new FileItem();
-        fileItem.setName(file.getOriginalFilename());
-        fileItem.setStoragePath(storedFilename);
-        fileItem.setSize(file.getSize());
-        fileItem.setMimeType(file.getContentType());
-        fileItem.setFolder(folder);
-        fileItem.setUserId(HARDCODED_USER_ID);
-
-        FileItem savedFile = fileItemRepository.save(fileItem);
-        return convertToDTO(savedFile);
+        // Convert to DTO
+        return convertToDTO(fileItem);
     }
 
-    @Transactional
-    public void deleteFile(Long fileId) throws IOException {
-        FileItem fileItem = fileItemRepository.findByIdAndUserId(fileId, HARDCODED_USER_ID)
-                .orElseThrow(() -> new RuntimeException("File not found"));
-
-        // Delete physical file
-        fileStorageService.deleteFile(fileItem.getStoragePath());
-
-        // Delete metadata
-        fileItemRepository.delete(fileItem);
+    /**
+     * Delete a file by its path
+     */
+    public void deleteFile(String filePath) throws IOException {
+        fileStorageService.deleteFile(filePath);
     }
 
-    @Transactional(readOnly = true)
-    public FileItem getFile(Long fileId) {
-        return fileItemRepository.findByIdAndUserId(fileId, HARDCODED_USER_ID)
-                .orElseThrow(() -> new RuntimeException("File not found"));
+    /**
+     * Get file metadata by path
+     */
+    public FileItem getFile(String filePath) throws IOException {
+        return fileStorageService.getFileMetadata(filePath);
+    }
+
+    /**
+     * Get file path for download
+     */
+    public Path getFilePath(String filePath) {
+        return fileStorageService.loadFile(filePath);
     }
 
     private FileItemDTO convertToDTO(FileItem file) {
         FileItemDTO dto = new FileItemDTO();
-        dto.setId(file.getId());
         dto.setName(file.getName());
+        dto.setPath(file.getPath());
         dto.setSize(file.getSize());
         dto.setMimeType(file.getMimeType());
-        dto.setFolderId(file.getFolder().getId());
+        dto.setFileTypeCategory(file.getFileTypeCategory());
+        dto.setFileTypeDescription(file.getFileTypeDescription());
+        dto.setExtension(file.getExtension());
         dto.setCreatedAt(file.getCreatedAt());
         dto.setUpdatedAt(file.getUpdatedAt());
         return dto;

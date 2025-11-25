@@ -10,11 +10,13 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class FileItemDTO {
-    private Long id;
     private String name;
+    private String path;
     private Long size;
     private String mimeType;
-    private Long folderId;
+    private String fileTypeCategory;
+    private String fileTypeDescription;
+    private String extension;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

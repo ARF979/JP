@@ -9,6 +9,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class CreateFolderRequest {
     private String name;
-    private Long parentId;
+    private String parentPath; // Changed from parentId to parentPath
 }
 
