@@ -1,0 +1,8 @@
+Member 6-(DTOs and Async processing)
+1.FileItemDTO.java
+2.FolderDTO.java
+3.FolderContentsDTO.java
+4.CreateFolderRequest.java
+5.FileUploadTaskDTO.java
+6.AsyncFileProcessingService.java
+7.FileUploadTask.java
